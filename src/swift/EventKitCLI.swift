@@ -1034,6 +1034,18 @@ class RemindersManager {
             let sameSeries = candidateId == id || candidateId.hasPrefix(id + "/RID=")
             return sameSeries && abs(occurrence.timeIntervalSince(target)) < 1
         }
+        // A detached occurrence's own id (the `.../RID=` form a read returns once an occurrence has
+        // been changed) resolves directly, wherever the occurrence was moved to. Only trust it if
+        // its occurrenceDate is the requested one, so a mismatched pair is refused, not guessed.
+        if id.contains("/RID=") {
+            guard let detached = eventStore.event(withIdentifier: id) else {
+                throw NSError(domain: "", code: 404, userInfo: [NSLocalizedDescriptionKey: "Event with ID '\(id)' not found."])
+            }
+            guard isWanted(detached) else {
+                throw NSError(domain: "", code: 409, userInfo: [NSLocalizedDescriptionKey: "Event '\(id)' exists but its occurrenceDate is not \(occurrenceDateString); refusing to guess."])
+            }
+            return detached
+        }
         var matches = eventStore.events(matching: predicate).filter(isWanted)
         if matches.isEmpty {
             // Moved beyond the window: a detached occurrence carries the observed identifier form
