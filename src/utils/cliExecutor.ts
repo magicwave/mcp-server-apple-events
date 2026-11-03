@@ -23,6 +23,30 @@ import { findProjectRoot } from './projectUtils.js';
 let cachedBinaryPath: string | null = null;
 
 /**
+ * Maximum wall-clock time EventKitCLI may run before the child is killed
+ * (default 30 s, overridable via `EVENTKIT_CLI_TIMEOUT_MS`). `execFile`'s default
+ * timeout is 0, "wait forever", which hangs the MCP request and leaks a child when
+ * the CLI blocks on an EventKit permission prompt that can never be displayed
+ * (headless/launchd context; upstream issue #113). SIGKILL ensures the child
+ * cannot ignore the timeout.
+ */
+const DEFAULT_CLI_TIMEOUT_MS = 30_000;
+
+// Node's timer clamps at 2^31 - 1 ms; larger values would fire immediately.
+const MAX_CLI_TIMEOUT_MS = 2_147_483_647;
+
+function resolveCliTimeoutMs(): number {
+  const raw = process.env.EVENTKIT_CLI_TIMEOUT_MS;
+  if (raw === undefined || raw.trim() === '') return DEFAULT_CLI_TIMEOUT_MS;
+  const digits = raw.trim().replace(/_/g, '');
+  if (!/^\d+$/.test(digits)) return DEFAULT_CLI_TIMEOUT_MS;
+  const parsed = Number(digits);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0)
+    return DEFAULT_CLI_TIMEOUT_MS;
+  return Math.min(parsed, MAX_CLI_TIMEOUT_MS);
+}
+
+/**
  * Clears the cached binary path (for testing)
  */
 export function clearBinaryPathCache(): void {
@@ -32,21 +56,29 @@ export function clearBinaryPathCache(): void {
 const execFilePromise = (
   cliPath: string,
   args: string[],
-): Promise<{ stdout: string; stderr: string }> =>
+): Promise<{ stdout: string; stderr: string; timeoutMs: number }> =>
   new Promise((resolve, reject) => {
-    execFile(cliPath, args, (error, stdout, stderr) => {
-      if (error) {
-        const execError = error as ExecFileException & {
-          stdout?: string | Buffer;
-          stderr?: string | Buffer;
-        };
-        execError.stdout = stdout;
-        execError.stderr = stderr;
-        reject(execError);
-        return;
-      }
-      resolve({ stdout, stderr });
-    });
+    const timeoutMs = resolveCliTimeoutMs();
+    execFile(
+      cliPath,
+      args,
+      { timeout: timeoutMs, killSignal: 'SIGKILL' },
+      (error, stdout, stderr) => {
+        if (error) {
+          const execError = error as ExecFileException & {
+            stdout?: string | Buffer;
+            stderr?: string | Buffer;
+            timeoutMs?: number;
+          };
+          execError.stdout = stdout;
+          execError.stderr = stderr;
+          execError.timeoutMs = timeoutMs;
+          reject(execError);
+          return;
+        }
+        resolve({ stdout, stderr, timeoutMs });
+      },
+    );
   });
 
 interface CliSuccessResponse<T> {
@@ -148,10 +180,21 @@ const runCli = async <T>(cliPath: string, args: string[]): Promise<T> => {
     }
     const execError = error as ExecFileException & {
       stdout?: string | Buffer;
+      timeoutMs?: number;
     };
     const normalized = bufferToString(execError?.stdout);
     if (normalized) {
       return parseCliOutput(normalized);
+    }
+    if (execError?.killed && execError.signal === 'SIGKILL') {
+      throw new Error(
+        `EventKitCLI timed out after ${execError.timeoutMs ?? DEFAULT_CLI_TIMEOUT_MS} ms and was killed. ` +
+          'Possible causes: an EventKit permission prompt that cannot be displayed ' +
+          '(headless/launchd context), a slow operation, or a stalled system. Grant ' +
+          'access in System Settings > Privacy & Security if a prompt was expected; ' +
+          'otherwise raise EVENTKIT_CLI_TIMEOUT_MS. A write may have completed ' +
+          'despite this error; verify before retrying.',
+      );
     }
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(`EventKitCLI execution failed: ${errorMessage}`);

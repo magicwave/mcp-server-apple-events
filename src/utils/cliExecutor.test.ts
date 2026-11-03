@@ -93,6 +93,7 @@ describe('cliExecutor', () => {
       expect(mockExecFile).toHaveBeenCalledWith(
         '/test/project/bin/EventKitCLI',
         ['--action', 'read', '--id', '123'],
+        expect.objectContaining({ timeout: 30_000, killSignal: 'SIGKILL' }),
         expect.any(Function),
       );
     });
@@ -219,6 +220,7 @@ describe('cliExecutor', () => {
       expect(mockExecFile).toHaveBeenCalledWith(
         '/custom/project/path/bin/EventKitCLI',
         ['--action', 'read'],
+        expect.objectContaining({ timeout: 30_000, killSignal: 'SIGKILL' }),
         expect.any(Function),
       );
     });
@@ -445,5 +447,92 @@ describe('cliExecutor', () => {
       expect(error.message).toBe('Calendar permission denied.');
       expect(error.domain).toBe('calendars');
     });
+  });
+});
+
+describe('cliExecutor spawn timeout (upstream #113 port)', () => {
+  const invoke = (
+    optionsOrCallback?: ExecFileOptions | null | ExecFileCallback,
+    callback?: ExecFileCallback,
+  ): ExecFileCallback | undefined =>
+    (typeof optionsOrCallback === 'function' ? optionsOrCallback : callback) as
+      | ExecFileCallback
+      | undefined;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    clearBinaryPathCache();
+    delete process.env.EVENTKIT_CLI_TIMEOUT_MS;
+    mockFindProjectRoot.mockReturnValue('/test/project');
+    mockGetEnvironmentBinaryConfig.mockReturnValue({});
+    mockFindSecureBinaryPath.mockReturnValue({
+      path: '/test/project/bin/EventKitCLI',
+    });
+  });
+
+  it('passes a 30 s SIGKILL timeout to execFile by default', async () => {
+    let seen: ExecFileOptions | null | undefined;
+    mockExecFile.mockImplementation(((
+      _cliPath: string,
+      _args: readonly string[] | null | undefined,
+      optionsOrCallback?: ExecFileOptions | null | ExecFileCallback,
+      callback?: ExecFileCallback,
+    ) => {
+      seen =
+        typeof optionsOrCallback === 'function' ? undefined : optionsOrCallback;
+      invoke(optionsOrCallback, callback)?.(
+        null,
+        JSON.stringify({ status: 'success', result: {} }),
+        '',
+      );
+      return {} as ChildProcess;
+    }) as unknown as typeof execFile);
+
+    await executeCli(['--action', 'read-calendars']);
+    expect(seen).toMatchObject({ timeout: 30_000, killSignal: 'SIGKILL' });
+  });
+
+  it('honours EVENTKIT_CLI_TIMEOUT_MS', async () => {
+    process.env.EVENTKIT_CLI_TIMEOUT_MS = '120000';
+    let seen: ExecFileOptions | null | undefined;
+    mockExecFile.mockImplementation(((
+      _cliPath: string,
+      _args: readonly string[] | null | undefined,
+      optionsOrCallback?: ExecFileOptions | null | ExecFileCallback,
+      callback?: ExecFileCallback,
+    ) => {
+      seen =
+        typeof optionsOrCallback === 'function' ? undefined : optionsOrCallback;
+      invoke(optionsOrCallback, callback)?.(
+        null,
+        JSON.stringify({ status: 'success', result: {} }),
+        '',
+      );
+      return {} as ChildProcess;
+    }) as unknown as typeof execFile);
+
+    await executeCli(['--action', 'read-calendars']);
+    expect(seen).toMatchObject({ timeout: 120_000 });
+  });
+
+  it('reports a killed child as a timeout with guidance', async () => {
+    mockExecFile.mockImplementation(((
+      _cliPath: string,
+      _args: readonly string[] | null | undefined,
+      optionsOrCallback?: ExecFileOptions | null | ExecFileCallback,
+      callback?: ExecFileCallback,
+    ) => {
+      const err = Object.assign(new Error('spawn killed'), {
+        killed: true,
+        signal: 'SIGKILL',
+        code: null,
+      }) as ExecFileException;
+      invoke(optionsOrCallback, callback)?.(err, '', '');
+      return {} as ChildProcess;
+    }) as unknown as typeof execFile);
+
+    await expect(executeCli(['--action', 'read-calendars'])).rejects.toThrow(
+      /timed out after 30000 ms.*permission prompt/i,
+    );
   });
 });
