@@ -12,9 +12,10 @@ import { VALIDATION } from '../utils/constants.js';
 // Allows standard printable ASCII, extended Latin, CJK, plus newlines/tabs for notes.
 // Blocks: control chars (0x00-0x1F except \n\r\t), DEL, dangerous delimiters, Unicode line separators
 // Blocks: bidirectional control characters (U+202A-U+202E, U+2066-U+2069) to prevent visual spoofing
+// Allows supplementary planes (U+10000 and above) so emoji pass (upstream issue #89).
 // This keeps Chinese/Unicode names working while remaining safe with AppleScript quoting.
 const SAFE_TEXT_PATTERN =
-  /^[\u0020-\u007E\u00A0-\u2029\u202F-\u2065\u206A-\uFFFF\n\r\t]*$/u;
+  /^[\u0020-\u007E\u00A0-\u2029\u202F-\u2065\u206A-\uFFFF\u{10000}-\u{10FFFF}\n\r\t]*$/u;
 // Support multiple date formats: YYYY-MM-DD, YYYY-MM-DD HH:mm:ss, or ISO 8601
 // Basic validation - detailed parsing handled by Swift
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}.*$/;
@@ -372,6 +373,18 @@ const AvailabilitySchema = z
 const SpanSchema = z.enum(['this-event', 'future-events']).optional();
 
 /**
+ * `span` and `occurrenceDate` express contradictory intents ("this or all following"
+ * versus "exactly this one"), so a request carrying both is rejected rather than
+ * silently honouring one. Mirrors upstream's contract for `occurrenceDate` on delete.
+ */
+const rejectSpanWithOccurrenceDate = {
+  check: (data: { span?: string; occurrenceDate?: string }) =>
+    !(data.span && data.occurrenceDate),
+  message:
+    'Provide either span or occurrenceDate, not both. span scopes a change across a series; occurrenceDate targets exactly one occurrence.',
+} as const;
+
+/**
  * Tag schema for reminder tags
  */
 const TagSchema = z
@@ -505,34 +518,46 @@ export const ReadCalendarEventsSchema = z.object({
   endDate: SafeDateSchema,
 });
 
-export const UpdateCalendarEventSchema = z.object({
-  id: SafeIdSchema,
-  title: SafeTextSchema.optional(),
-  startDate: SafeDateSchema,
-  endDate: SafeDateSchema,
-  note: SafeNoteSchema,
-  location: createSafeTextSchema(
-    0,
-    VALIDATION.MAX_LOCATION_LENGTH,
-    'Location',
-    true,
-  ),
-  structuredLocation: StructuredLocationSchema.nullable(),
-  url: SafeUrlSchema,
-  isAllDay: z.boolean().optional(),
-  availability: AvailabilitySchema,
-  alarms: AlarmArraySchema,
-  clearAlarms: z.boolean().optional(),
-  recurrenceRules: RecurrenceRulesSchema,
-  clearRecurrence: z.boolean().optional(),
-  span: SpanSchema,
-  targetCalendar: SafeListNameSchema,
-});
+export const UpdateCalendarEventSchema = z
+  .object({
+    id: SafeIdSchema,
+    title: SafeTextSchema.optional(),
+    startDate: SafeDateSchema,
+    endDate: SafeDateSchema,
+    note: SafeNoteSchema,
+    location: createSafeTextSchema(
+      0,
+      VALIDATION.MAX_LOCATION_LENGTH,
+      'Location',
+      true,
+    ),
+    structuredLocation: StructuredLocationSchema.nullable(),
+    url: SafeUrlSchema,
+    isAllDay: z.boolean().optional(),
+    availability: AvailabilitySchema,
+    alarms: AlarmArraySchema,
+    clearAlarms: z.boolean().optional(),
+    recurrenceRules: RecurrenceRulesSchema,
+    clearRecurrence: z.boolean().optional(),
+    span: SpanSchema,
+    occurrenceDate: SafeDateSchema,
+    targetCalendar: SafeListNameSchema,
+  })
+  .refine(rejectSpanWithOccurrenceDate.check, {
+    message: rejectSpanWithOccurrenceDate.message,
+    path: ['occurrenceDate'],
+  });
 
-export const DeleteCalendarEventSchema = z.object({
-  id: SafeIdSchema,
-  span: SpanSchema,
-});
+export const DeleteCalendarEventSchema = z
+  .object({
+    id: SafeIdSchema,
+    span: SpanSchema,
+    occurrenceDate: SafeDateSchema,
+  })
+  .refine(rejectSpanWithOccurrenceDate.check, {
+    message: rejectSpanWithOccurrenceDate.message,
+    path: ['occurrenceDate'],
+  });
 
 export const ReadCalendarsSchema = z.object({});
 

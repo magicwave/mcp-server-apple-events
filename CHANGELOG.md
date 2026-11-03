@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Aya-maintained line (fork `magicwave/mcp-server-apple-events`, branch `aya-occurrence-date` off the `aya-pinned` v1.3.0+25 pin; the EventKit backend is kept deliberately).
+
+### Added
+
+- **`occurrenceDate` on `calendar_events` update and delete**: targets one occurrence of a recurring series. Every occurrence shares the series `eventIdentifier` and `event(withIdentifier:)` returns the first one, so `span: this-event` could only ever change the series start. The CLI now resolves `id` plus `occurrenceDate` through a one-second `predicateForEvents` window, accepting the series id or a detached occurrence's `.../RID=` id, and refuses to act when zero or several occurrences match. `span` and `occurrenceDate` together are rejected. Verified on throwaway series: only the named occurrence is detached and changed; the rest of the series is untouched.
+- **Spawn timeout for EventKitCLI** (port of upstream #113): `execFile` now runs with a 30 s SIGKILL timeout, overridable with `EVENTKIT_CLI_TIMEOUT_MS`, so a permission prompt that cannot be shown under launchd fails with a readable error instead of hanging the MCP request and leaking the child.
+
+### Changed
+
+- `SAFE_TEXT_PATTERN` accepts supplementary-plane characters, so emoji pass validation (upstream #89).
+- `MAX_NOTE_LENGTH` raised from 2000 to 20000 (upstream #72).
+
 ## [1.3.0] - 2026-02-04
 
 ### Added

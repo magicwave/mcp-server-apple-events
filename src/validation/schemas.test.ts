@@ -65,7 +65,7 @@ describe('ValidationSchemas', () => {
       });
 
       it('should reject notes that are too long', () => {
-        const longNote = 'a'.repeat(2001);
+        const longNote = 'a'.repeat(20001);
         expect(() => SafeNoteSchema.parse(longNote)).toThrow();
       });
 
@@ -76,7 +76,7 @@ describe('ValidationSchemas', () => {
 
       it('should use custom fieldName in error messages', () => {
         // SafeNoteSchema uses 'Note' as fieldName
-        const longText = 'a'.repeat(2001);
+        const longText = 'a'.repeat(20001);
         try {
           SafeNoteSchema.parse(longText);
           expect(true).toBe(false); // Should throw
@@ -783,6 +783,76 @@ describe('ValidationSchemas', () => {
       );
 
       schema.parse = originalParse;
+    });
+  });
+});
+
+describe('Aya patch: occurrenceDate, supplementary-plane text, note length', () => {
+  describe('occurrenceDate on calendar update and delete', () => {
+    it('accepts occurrenceDate on update', () => {
+      const result = UpdateCalendarEventSchema.parse({
+        id: 'abc',
+        note: 'x',
+        occurrenceDate: '2026-11-11T09:00:00-08:00',
+      });
+      expect(result.occurrenceDate).toBe('2026-11-11T09:00:00-08:00');
+    });
+
+    it('accepts occurrenceDate on delete', () => {
+      const result = DeleteCalendarEventSchema.parse({
+        id: 'abc',
+        occurrenceDate: '2026-11-11T09:00:00-08:00',
+      });
+      expect(result.occurrenceDate).toBe('2026-11-11T09:00:00-08:00');
+    });
+
+    it('rejects span together with occurrenceDate on update', () => {
+      expect(() =>
+        UpdateCalendarEventSchema.parse({
+          id: 'abc',
+          span: 'this-event',
+          occurrenceDate: '2026-11-11T09:00:00-08:00',
+        }),
+      ).toThrow(/either span or occurrenceDate/);
+    });
+
+    it('rejects span together with occurrenceDate on delete', () => {
+      expect(() =>
+        DeleteCalendarEventSchema.parse({
+          id: 'abc',
+          span: 'future-events',
+          occurrenceDate: '2026-11-11T09:00:00-08:00',
+        }),
+      ).toThrow(/either span or occurrenceDate/);
+    });
+
+    it('rejects a malformed occurrenceDate', () => {
+      expect(() =>
+        UpdateCalendarEventSchema.parse({
+          id: 'abc',
+          occurrenceDate: 'next tuesday',
+        }),
+      ).toThrow();
+    });
+  });
+
+  describe('supplementary-plane characters (upstream #89)', () => {
+    it('accepts emoji in titles and notes', () => {
+      expect(SafeTextSchema.parse('Lunch 🍜 with 👩‍💻')).toBe(
+        'Lunch 🍜 with 👩‍💻',
+      );
+      expect(SafeNoteSchema.parse('Done ✅ 🎉')).toBe('Done ✅ 🎉');
+    });
+
+    it('still rejects control characters', () => {
+      expect(() => SafeTextSchema.parse('bad\u0000text')).toThrow();
+    });
+  });
+
+  describe('note length (upstream #72)', () => {
+    it('accepts a 20000-character note and rejects 20001', () => {
+      expect(SafeNoteSchema.parse('a'.repeat(20000))).toHaveLength(20000);
+      expect(() => SafeNoteSchema.parse('a'.repeat(20001))).toThrow();
     });
   });
 });

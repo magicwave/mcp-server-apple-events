@@ -670,12 +670,14 @@ Handles EventKit calendar events (time blocks) with CRUD capabilities.
 - Other fields align with create parameters and are optional updates
 - `clearAlarms` _(optional)_: Set to true to remove all alarms
 - `clearRecurrence` _(optional)_: Set to true to remove all recurrence rules
-- `span` _(optional)_: Scope for recurring event changes: `"this-event"` or `"future-events"`
+- `span` _(optional)_: Scope for recurring event changes: `"this-event"` or `"future-events"`. Without `occurrenceDate`, `this-event` always addresses the series start.
+- `occurrenceDate` _(optional)_: Start of the single occurrence of a recurring series to update, exactly as a read returns it in `occurrenceDate` (e.g. `2026-11-11T09:00:00-08:00`). Resolves `id` plus this date to one occurrence (the series id or a detached occurrence's `.../RID=` id both work) and fails without changes if none or several match. Provide either `span` or `occurrenceDate`, not both.
 
 **Delete Action** (`action: "delete"`):
 
 - `id` _(required)_: Event identifier to remove
 - `span` _(optional)_: Scope for recurring event deletes: `"this-event"` or `"future-events"`
+- `occurrenceDate` _(optional)_: Delete exactly one occurrence of a recurring series; same semantics as on update. Provide either `span` or `occurrenceDate`, not both.
 
 ### Calendar Collections Tool
 

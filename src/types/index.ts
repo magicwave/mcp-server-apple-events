@@ -345,6 +345,8 @@ export interface CalendarToolArgs extends BaseToolArgs {
   recurrenceRules?: RecurrenceRule[];
   clearRecurrence?: boolean;
   span?: 'this-event' | 'future-events';
+  // Update/delete: start of the one occurrence of a recurring series to target
+  occurrenceDate?: string;
   // Target calendar for create/update operations
   targetCalendar?: string;
 }

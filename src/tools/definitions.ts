@@ -580,7 +580,17 @@ export const TOOLS: Tool[] = [
           type: 'string',
           enum: ['this-event', 'future-events'],
           description:
-            'Scope for changes to recurring events: this-event or future-events.',
+            'Scope for changes to recurring events: this-event or future-events. ' +
+            'Without occurrenceDate, this-event always addresses the series start.',
+        },
+        occurrenceDate: {
+          type: 'string',
+          description:
+            'Update and delete only. Start of the single occurrence of a recurring ' +
+            'series to target, exactly as a read returns it in occurrenceDate ' +
+            '(e.g. 2026-11-11T09:00:00-08:00). Resolves the id plus this date to ' +
+            'one occurrence and fails without changes if none or several match. ' +
+            'Provide either span or occurrenceDate, not both.',
         },
         targetCalendar: {
           type: 'string',

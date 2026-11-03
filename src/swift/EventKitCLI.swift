@@ -1013,10 +1013,50 @@ class RemindersManager {
     private func findEvent(withId id: String) -> EKEvent? {
         return eventStore.event(withIdentifier: id)
     }
+
+    /// Resolves one occurrence of a recurring series from its series (or detached) identifier
+    /// plus the occurrence's start. `event(withIdentifier:)` always returns the series' first
+    /// occurrence, and every occurrence shares the series `eventIdentifier`, so the date is the
+    /// only way to name a later one. A detached occurrence carries the series identifier with a
+    /// `/RID=` suffix; both forms are accepted so the caller can pass whatever a read returned.
+    /// Fails without mutation when the date matches no occurrence or more than one.
+    private func resolveOccurrence(id: String, occurrenceDateString: String) throws -> EKEvent {
+        guard let target = parseDate(from: occurrenceDateString) else {
+            throw NSError(domain: "", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid occurrenceDate format."])
+        }
+        let predicate = eventStore.predicateForEvents(withStart: target, end: target.addingTimeInterval(1), calendars: nil)
+        let matches = eventStore.events(matching: predicate).filter { candidate in
+            guard let candidateId = candidate.eventIdentifier, let occurrence = candidate.occurrenceDate else { return false }
+            let sameSeries = candidateId == id || candidateId.hasPrefix(id + "/RID=")
+            return sameSeries && abs(occurrence.timeIntervalSince(target)) < 1
+        }
+        switch matches.count {
+        case 1:
+            return matches[0]
+        case 0:
+            throw NSError(domain: "", code: 404, userInfo: [NSLocalizedDescriptionKey: "No occurrence of event '\(id)' starts at \(occurrenceDateString). Read the event to see its occurrenceDate values."])
+        default:
+            throw NSError(domain: "", code: 409, userInfo: [NSLocalizedDescriptionKey: "occurrenceDate \(occurrenceDateString) matched \(matches.count) occurrences of event '\(id)'; refusing to guess."])
+        }
+    }
+
+    /// `span` and `occurrenceDate` express contradictory intents; reject both together.
+    private func rejectSpanWithOccurrenceDate(span: String?, occurrenceDate: String?) throws {
+        if span != nil && occurrenceDate != nil {
+            throw NSError(domain: "", code: 400, userInfo: [NSLocalizedDescriptionKey: "Provide either span or occurrenceDate, not both. span scopes a change across a series; occurrenceDate targets exactly one occurrence."])
+        }
+    }
     
-    func updateEvent(id: String, title: String?, calendarName: String?, startDateString: String?, endDateString: String?, notes: String?, location: String?, structuredLocationJSON: String?, urlString: String?, isAllDay: Bool?, availability: String?, alarmsJSON: String?, clearAlarms: Bool?, recurrenceRulesJSON: String?, clearRecurrence: Bool?, span: String?) throws -> EventJSON {
-        guard let event = findEvent(withId: id) else {
-            throw NSError(domain: "", code: 404, userInfo: [NSLocalizedDescriptionKey: "Event with ID '\(id)' not found."])
+    func updateEvent(id: String, title: String?, calendarName: String?, startDateString: String?, endDateString: String?, notes: String?, location: String?, structuredLocationJSON: String?, urlString: String?, isAllDay: Bool?, availability: String?, alarmsJSON: String?, clearAlarms: Bool?, recurrenceRulesJSON: String?, clearRecurrence: Bool?, span: String?, occurrenceDate: String? = nil) throws -> EventJSON {
+        try rejectSpanWithOccurrenceDate(span: span, occurrenceDate: occurrenceDate)
+        let event: EKEvent
+        if let occurrenceDate = occurrenceDate {
+            event = try resolveOccurrence(id: id, occurrenceDateString: occurrenceDate)
+        } else {
+            guard let found = findEvent(withId: id) else {
+                throw NSError(domain: "", code: 404, userInfo: [NSLocalizedDescriptionKey: "Event with ID '\(id)' not found."])
+            }
+            event = found
         }
         
         if let newTitle = title { event.title = newTitle }
@@ -1098,17 +1138,25 @@ class RemindersManager {
             event.recurrenceRules = rules
         }
 
-        let saveSpan: EKSpan = (span?.lowercased() == "future-events") ? .futureEvents : .thisEvent
+        // An explicit occurrence is always saved as that one occurrence (a detached instance).
+        let saveSpan: EKSpan = (occurrenceDate == nil && span?.lowercased() == "future-events") ? .futureEvents : .thisEvent
         
         try eventStore.save(event, span: saveSpan, commit: true)
         return event.toJSON()
     }
     
-    func deleteEvent(id: String, span: String?) throws {
-        guard let event = findEvent(withId: id) else {
-            throw NSError(domain: "", code: 404, userInfo: [NSLocalizedDescriptionKey: "Event with ID '\(id)' not found."])
+    func deleteEvent(id: String, span: String?, occurrenceDate: String? = nil) throws {
+        try rejectSpanWithOccurrenceDate(span: span, occurrenceDate: occurrenceDate)
+        let event: EKEvent
+        if let occurrenceDate = occurrenceDate {
+            event = try resolveOccurrence(id: id, occurrenceDateString: occurrenceDate)
+        } else {
+            guard let found = findEvent(withId: id) else {
+                throw NSError(domain: "", code: 404, userInfo: [NSLocalizedDescriptionKey: "Event with ID '\(id)' not found."])
+            }
+            event = found
         }
-        let removeSpan: EKSpan = (span?.lowercased() == "future-events") ? .futureEvents : .thisEvent
+        let removeSpan: EKSpan = (occurrenceDate == nil && span?.lowercased() == "future-events") ? .futureEvents : .thisEvent
         try eventStore.remove(event, span: removeSpan, commit: true)
     }
     
@@ -1600,12 +1648,13 @@ func main() {
                     clearAlarms: parser.get("clearAlarms").map { $0 == "true" },
                     recurrenceRulesJSON: parser.get("recurrenceRules"),
                     clearRecurrence: parser.get("clearRecurrence").map { $0 == "true" },
-                    span: parser.get("span")
+                    span: parser.get("span"),
+                    occurrenceDate: parser.get("occurrenceDate")
                 )
                 print(String(data: try encoder.encode(StandardOutput(result: event)), encoding: .utf8)!)
             case "delete-event":
                 guard let id = parser.get("id") else { throw NSError(domain: "", code: 400, userInfo: [NSLocalizedDescriptionKey: "--id required."]) }
-                try manager.deleteEvent(id: id, span: parser.get("span")); print(String(data: try encoder.encode(StandardOutput(result: DeleteResult(id: id))), encoding: .utf8)!)
+                try manager.deleteEvent(id: id, span: parser.get("span"), occurrenceDate: parser.get("occurrenceDate")); print(String(data: try encoder.encode(StandardOutput(result: DeleteResult(id: id))), encoding: .utf8)!)
             default: throw NSError(domain: "", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid or missing --action."])
             }
         } catch { outputError(error.localizedDescription) }

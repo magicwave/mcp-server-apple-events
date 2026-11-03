@@ -91,6 +91,7 @@ describe('Tools Definitions', () => {
       expect(calendarProps).toHaveProperty('recurrenceRules');
       expect(calendarProps).toHaveProperty('clearRecurrence');
       expect(calendarProps).toHaveProperty('span');
+      expect(calendarProps).toHaveProperty('occurrenceDate');
     });
 
     it('should enforce tool name pattern compliance', () => {

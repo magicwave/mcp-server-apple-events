@@ -523,5 +523,43 @@ describe('CalendarRepository', () => {
         '1',
       ]);
     });
+
+    it('should pass occurrenceDate through to the CLI', async () => {
+      mockExecuteCli.mockResolvedValue({});
+
+      await repository.deleteEvent('1', undefined, '2026-11-11T09:00:00-08:00');
+
+      expect(mockExecuteCli).toHaveBeenCalledWith([
+        '--action',
+        'delete-event',
+        '--id',
+        '1',
+        '--occurrenceDate',
+        '2026-11-11T09:00:00-08:00',
+      ]);
+    });
+  });
+
+  describe('updateEvent with occurrenceDate', () => {
+    it('should pass occurrenceDate through to the CLI', async () => {
+      mockExecuteCli.mockResolvedValue({ id: '1', title: 'T' });
+
+      await repository.updateEvent({
+        id: '1',
+        notes: 'occurrence-only note',
+        occurrenceDate: '2026-11-11T09:00:00-08:00',
+      });
+
+      expect(mockExecuteCli).toHaveBeenCalledWith([
+        '--action',
+        'update-event',
+        '--id',
+        '1',
+        '--note',
+        'occurrence-only note',
+        '--occurrenceDate',
+        '2026-11-11T09:00:00-08:00',
+      ]);
+    });
   });
 });

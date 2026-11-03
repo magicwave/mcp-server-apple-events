@@ -198,4 +198,6 @@ export interface UpdateEventData {
   recurrenceRules?: RecurrenceRuleJSON[];
   clearRecurrence?: boolean;
   span?: 'this-event' | 'future-events';
+  /** Start of the single occurrence of a recurring series to update (ISO 8601 with timezone). */
+  occurrenceDate?: string;
 }
