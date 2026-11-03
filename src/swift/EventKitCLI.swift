@@ -1024,11 +1024,25 @@ class RemindersManager {
         guard let target = parseDate(from: occurrenceDateString) else {
             throw NSError(domain: "", code: 400, userInfo: [NSLocalizedDescriptionKey: "Invalid occurrenceDate format."])
         }
-        let predicate = eventStore.predicateForEvents(withStart: target, end: target.addingTimeInterval(1), calendars: nil)
-        let matches = eventStore.events(matching: predicate).filter { candidate in
+        // `occurrenceDate` is the occurrence's original slot and stays fixed when the occurrence is
+        // moved, but the predicate matches on the current start/end, so a moved occurrence can sit
+        // well away from its original slot. Search a wide window and match on occurrenceDate only.
+        let window: TimeInterval = 62 * 86400
+        let predicate = eventStore.predicateForEvents(withStart: target.addingTimeInterval(-window), end: target.addingTimeInterval(window), calendars: nil)
+        let isWanted: (EKEvent) -> Bool = { candidate in
             guard let candidateId = candidate.eventIdentifier, let occurrence = candidate.occurrenceDate else { return false }
             let sameSeries = candidateId == id || candidateId.hasPrefix(id + "/RID=")
             return sameSeries && abs(occurrence.timeIntervalSince(target)) < 1
+        }
+        var matches = eventStore.events(matching: predicate).filter(isWanted)
+        if matches.isEmpty {
+            // Moved beyond the window: a detached occurrence carries the observed identifier form
+            // `<seriesId>/RID=<seconds since the reference date of its original start>`. Try it as
+            // a last resort, and only trust the result if its occurrenceDate is the requested one.
+            let detachedId = "\(id)/RID=\(Int(target.timeIntervalSinceReferenceDate))"
+            if let detached = eventStore.event(withIdentifier: detachedId), isWanted(detached) {
+                matches = [detached]
+            }
         }
         switch matches.count {
         case 1:
